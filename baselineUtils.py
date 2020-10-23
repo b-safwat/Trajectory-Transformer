@@ -9,21 +9,24 @@ import scipy.io
 
 
 def create_dataset(dataset_folder, dataset_name, val_size, gt, horizon,
-                   delim="\t", train=True, eval=False, verbose=False):
-    if train == True:
-        full_dt_folder = os.path.join(dataset_folder, dataset_name, "train")
-        datasets_list = os.listdir(full_dt_folder)
-        name="train"
-    if train == False and eval == False:
-        full_dt_folder = os.path.join(dataset_folder, dataset_name, "val")
-        datasets_list = os.listdir(full_dt_folder)
-        name = "val"
-    if train == False and eval == True:
-        datasets_list = os.listdir(os.path.join(dataset_folder, dataset_name, "test"))
-        full_dt_folder = os.path.join(dataset_folder, dataset_name, "test")
-        name = "test"
+                   delim="\t", train=True, eval=False, inference_path=None, verbose=False):
+    if not inference_path:
+        if train == True:
+            full_dt_folder = os.path.join(dataset_folder, dataset_name, "train")
+            datasets_list = os.listdir(full_dt_folder)
+            name="train"
+        if train == False and eval == False:
+            full_dt_folder = os.path.join(dataset_folder, dataset_name, "val")
+            datasets_list = os.listdir(full_dt_folder)
+            name = "val"
+        if train == False and eval == True:
+            full_dt_folder = os.path.join(dataset_folder, dataset_name, "test")
+            datasets_list = os.listdir(full_dt_folder)
+            name = "test"
+    else:
+        full_dt_folder = os.path.join(dataset_folder, dataset_name, "inference")
+        datasets_list=os.listdir(full_dt_folder)
 
-    datasets_list = datasets_list
     data = {}
     data_src = []
     data_trg = []
@@ -241,7 +244,8 @@ def get_strided_data_clust(dt, gt_size, horizon, step):
     ped_ids = np.stack(ped_ids)
 
     # inp_relative_pos= inp_te_np-inp_te_np[:,:1,:]
-    inp_speed = np.concatenate((np.zeros((inp_te_np.shape[0], 1, 2)), inp_te_np[:, 1:, 0:2] - inp_te_np[:, :-1, 0:2]),
+    inp_speed = np.concatenate((np.zeros((inp_te_np.shape[0], 1, 2)),
+                                inp_te_np[:, 1:, 0:2] - inp_te_np[:, :-1, 0:2]),
                                1)
     # inp_accel = np.concatenate((np.zeros((inp_te_np.shape[0],1,2)),inp_speed[:,1:,0:2] - inp_speed[:, :-1, 0:2]),1)
     # inp_std = inp_no_start.std(axis=(0, 1))
@@ -256,7 +260,8 @@ def get_strided_data_clust(dt, gt_size, horizon, step):
     inp_std = np.ones(4)
 
     return inp_norm[:, :gt_size], inp_norm[:, gt_size:], {'mean': inp_mean, 'std': inp_std,
-                                                          'seq_start': inp_te_np[:, 0:1, :].copy(), 'frames': frames,
+                                                          'seq_start': inp_te_np[:, 0:1, :].copy(),
+                                                          'frames': frames,
                                                           'peds': ped_ids}
 
 
