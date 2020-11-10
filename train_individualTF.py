@@ -23,17 +23,17 @@ def main():
     parser.add_argument('--dataset_name', type=str, default='nuscenes')
     parser.add_argument('--obs', type=int, default=8)
     parser.add_argument('--preds', type=int, default=12)
-    parser.add_argument('--emb_size', type=int, default=512)
-    parser.add_argument('--heads', type=int, default=8)
-    parser.add_argument('--layers', type=int, default=6)
+    parser.add_argument('--emb_size', type=int, default=512) # decrease the number of
+    parser.add_argument('--heads', type=int, default=8) # 8
+    parser.add_argument('--layers', type=int, default=4) # 6
     parser.add_argument('--dropout', type=float, default=0.1)
     parser.add_argument('--cpu', action='store_true')
     parser.add_argument('--val_size', type=int, default=0)
     parser.add_argument('--verbose', action='store_true')
-    parser.add_argument('--max_epoch', type=int, default=1350)
-    parser.add_argument('--batch_size', type=int, default=70)
+    parser.add_argument('--max_epoch', type=int, default=1500)
+    parser.add_argument('--batch_size', type=int, default=2048) # 70
     parser.add_argument('--validation_epoch_start', type=int, default=30)
-    parser.add_argument('--resume_train', action='store_true', default=True)
+    parser.add_argument('--resume_train', action='store_true', default=False)
     parser.add_argument('--delim', type=str, default='\t')
     parser.add_argument('--name', type=str, default="nuscenes")
     parser.add_argument('--factor', type=float, default=1.)
@@ -101,14 +101,14 @@ def main():
 
     import individual_TF
     model = individual_TF.IndividualTF(2, 3, 3, N=args.layers,
-                                       d_model=args.emb_size, d_ff=2048, h=args.heads, dropout=args.dropout,
+                                       d_model=args.emb_size, d_ff=2048, heads=args.heads, dropout=args.dropout,
                                        mean=[0, 0], std=[0, 0]).to(device)
     if args.resume_train:
         model.load_state_dict(torch.load(f'models/Individual/{args.name}/model.pth'))
 
-    tr_dl = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=12)
-    val_dl = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, num_workers=12)
-    test_dl = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=12)
+    tr_dl = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
+    val_dl = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
+    test_dl = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
     # optim = SGD(list(a.parameters())+list(model.parameters())+list(generator.parameters()),lr=0.01)
     # sched=torch.optim.lr_scheduler.StepLR(optim,0.0005)
@@ -245,8 +245,7 @@ def main():
                     preds_tr_b = (dec_inp[:, 1:, 0:2] * std.to(device) + mean.to(device)).cpu().numpy().cumsum(1) + \
                                  batch['src'][:, -1:, 0:2].cpu().numpy()
                     pr.append(preds_tr_b)
-                    print("test epoch %03i/%03i  batch %04i / %04i" % (
-                        epoch, args.max_epoch, id_b, len(test_dl)))
+                    print("test epoch %03i/%03i  batch %04i / %04i" % (epoch, args.max_epoch, id_b, len(test_dl)))
 
                 peds = np.concatenate(peds, 0)
                 frames = np.concatenate(frames, 0)
