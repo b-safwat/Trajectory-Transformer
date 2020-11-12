@@ -9,8 +9,8 @@ import scipy.io
 
 
 def create_dataset(dataset_folder, dataset_name, val_size, gt, horizon,
-                   delim="\t", train=True, eval=False, verbose=False, inference_path=False):
-    if not inference_path:
+                   delim="\t", train=True, eval=False, verbose=False, inference=False):
+    if not inference:
         if train == True:
             full_dt_folder = os.path.join(dataset_folder, dataset_name, "train")
             datasets_list = os.listdir(full_dt_folder)
