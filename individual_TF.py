@@ -19,15 +19,16 @@ import math
 
 class IndividualTF(nn.Module):
     def __init__(self, enc_inp_size, dec_inp_size, dec_out_size, N=6,
-                   d_model=512, d_ff=2048, h=8, dropout=0.1,mean=[0,0],std=[0,0]):
+                 d_model=512, d_ff=2048, heads=8, dropout=0.1, mean=[0, 0], std=[0, 0]):
         super(IndividualTF, self).__init__()
         "Helper: Construct a model from hyperparameters."
         c = copy.deepcopy
-        attn = MultiHeadAttention(h, d_model)
+        attn = MultiHeadAttention(heads, d_model)
         ff = PointerwiseFeedforward(d_model, d_ff, dropout)
         position = PositionalEncoding(d_model, dropout)
         self.mean=np.array(mean)
         self.std=np.array(std)
+
         self.model = EncoderDecoder(
             Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout), N),
             Decoder(DecoderLayer(d_model, c(attn), c(attn),
@@ -42,12 +43,9 @@ class IndividualTF(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-
-
-
-
     def forward(self, *input):
         return self.model.generator(self.model(*input))
+
 
 class LinearEmbedding(nn.Module):
     def __init__(self, inp_size,d_model):
@@ -69,5 +67,3 @@ class Generator(nn.Module):
 
     def forward(self, x):
         return self.proj(x)
-
-
