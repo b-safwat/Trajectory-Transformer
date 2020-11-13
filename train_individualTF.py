@@ -1,4 +1,6 @@
 import argparse
+import shutil
+
 import baselineUtils
 import torch
 import torch.utils.data
@@ -23,23 +25,23 @@ def main():
     parser.add_argument('--dataset_name', type=str, default='nuscenes')
     parser.add_argument('--obs', type=int, default=8)
     parser.add_argument('--preds', type=int, default=12)
-    parser.add_argument('--emb_size', type=int, default=512) # decrease the number of
-    parser.add_argument('--heads', type=int, default=8) # 8
-    parser.add_argument('--layers', type=int, default=4) # 6
+    parser.add_argument('--emb_size', type=int, default=1024) # 512
+    parser.add_argument('--heads', type=int, default=1) # 8
+    parser.add_argument('--layers', type=int, default=8) # 6
     parser.add_argument('--dropout', type=float, default=0.1)
     parser.add_argument('--cpu', action='store_true')
     parser.add_argument('--val_size', type=int, default=0)
     parser.add_argument('--verbose', action='store_true')
-    parser.add_argument('--max_epoch', type=int, default=1500)
-    parser.add_argument('--batch_size', type=int, default=2048) # 70
+    parser.add_argument('--max_epoch', type=int, default=250)
+    parser.add_argument('--batch_size', type=int, default=1024) # 70
     parser.add_argument('--validation_epoch_start', type=int, default=30)
     parser.add_argument('--resume_train', action='store_true', default=False)
     parser.add_argument('--delim', type=str, default='\t')
     parser.add_argument('--name', type=str, default="nuscenes")
     parser.add_argument('--factor', type=float, default=1.)
     parser.add_argument('--save_step', type=int, default=100)
-    parser.add_argument('--warmup', type=int, default=10)
-    parser.add_argument('--evaluate', type=bool, default=True)
+    parser.add_argument('--warmup', type=int, default=2)
+    parser.add_argument('--evaluate', type=bool, default=False)
 
     args = parser.parse_args()
     model_name = args.name
@@ -80,6 +82,7 @@ def main():
     if args.cpu or not torch.cuda.is_available():
         device = torch.device("cpu")
 
+    number_features = 4
     args.verbose = True
 
     ## creation of the dataloaders for train and validation
@@ -87,22 +90,27 @@ def main():
         train_dataset, _ = baselineUtils.create_dataset(args.dataset_folder, args.dataset_name, 0,
                                                         args.obs,
                                                         args.preds, delim=args.delim, train=True,
-                                                        verbose=args.verbose)
+                                                        verbose=args.verbose, num_columns=number_features)
         val_dataset, _ = baselineUtils.create_dataset(args.dataset_folder, args.dataset_name, 0, args.obs,
                                                       args.preds, delim=args.delim, train=False,
-                                                      verbose=args.verbose)
+                                                      verbose=args.verbose, num_columns=number_features)
     else:
         train_dataset, val_dataset = baselineUtils.create_dataset(args.dataset_folder, args.dataset_name, args.val_size,
                                                                   args.obs, args.preds, delim=args.delim, train=True,
-                                                                  verbose=args.verbose)
+                                                                  verbose=args.verbose, num_columns=number_features)
 
     test_dataset, _ = baselineUtils.create_dataset(args.dataset_folder, args.dataset_name, 0, args.obs, args.preds,
-                                                   delim=args.delim, train=False, eval=True, verbose=args.verbose)
+                                                   delim=args.delim, train=False, eval=True, verbose=args.verbose,
+                                                   num_columns=number_features)
 
     import individual_TF
-    model = individual_TF.IndividualTF(2, 3, 3, N=args.layers,
+    model = individual_TF.IndividualTF(number_features, number_features+1, number_features+1, N=args.layers,
                                        d_model=args.emb_size, d_ff=2048, heads=args.heads, dropout=args.dropout,
                                        mean=[0, 0], std=[0, 0]).to(device)
+    # model = individual_TF.IndividualTF(2, 2, 2, N=args.layers,
+    #                                    d_model=args.emb_size, d_ff=2048, heads=args.heads, dropout=args.dropout,
+    #                                    mean=[0, 0], std=[0, 0]).to(device)
+
     if args.resume_train:
         model.load_state_dict(torch.load(f'models/Individual/{args.name}/model.pth'))
 
@@ -110,25 +118,30 @@ def main():
     val_dl = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
     test_dl = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
-    # optim = SGD(list(a.parameters())+list(model.parameters())+list(generator.parameters()),lr=0.01)
+    # optim = SGD(model.parameters(),lr=0.01)
     # sched=torch.optim.lr_scheduler.StepLR(optim,0.0005)
     optim = NoamOpt(args.emb_size, args.factor, len(tr_dl) * args.warmup,
                     torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
+                    # torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9))
     # optim=Adagrad(list(a.parameters())+list(model.parameters())+list(generator.parameters()),lr=0.01,lr_decay=0.001)
     epoch = 0
 
-    # mean=train_dataset[:]['src'][:,1:,2:4].mean((0,1))
-    mean = torch.cat((train_dataset[:]['src'][:, 1:, 2:4], train_dataset[:]['trg'][:, :, 2:4]), 1).mean((0, 1))
-    # std=train_dataset[:]['src'][:,1:,2:4].std((0,1))
-    std = torch.cat((train_dataset[:]['src'][:, 1:, 2:4], train_dataset[:]['trg'][:, :, 2:4]), 1).std((0, 1))
     means = []
     stds = []
+
     for i in np.unique(train_dataset[:]['dataset']):
         ind = train_dataset[:]['dataset'] == i
+        # means.append(
+        #     torch.cat((train_dataset[:]['src'][ind, 1:, 2:4], train_dataset[:]['trg'][ind, :, 2:4]), 1).mean((0, 1)))
+        # stds.append(
+        #     torch.cat((train_dataset[:]['src'][ind, 1:, 2:4], train_dataset[:]['trg'][ind, :, 2:4]), 1).std((0, 1)))
         means.append(
-            torch.cat((train_dataset[:]['src'][ind, 1:, 2:4], train_dataset[:]['trg'][ind, :, 2:4]), 1).mean((0, 1)))
+            torch.cat((train_dataset[:]['src'][ind, 1:, number_features:2*number_features],
+                       train_dataset[:]['trg'][ind, :, number_features:2*number_features]), 1).mean((0, 1)))
         stds.append(
-            torch.cat((train_dataset[:]['src'][ind, 1:, 2:4], train_dataset[:]['trg'][ind, :, 2:4]), 1).std((0, 1)))
+            torch.cat((train_dataset[:]['src'][ind, 1:, number_features:2*number_features],
+                       train_dataset[:]['trg'][ind, :, number_features:2*number_features]), 1).std((0, 1)))
+
     mean = torch.stack(means).mean(0)
     std = torch.stack(stds).mean(0)
 
@@ -140,31 +153,40 @@ def main():
 
         for id_b, batch in enumerate(tr_dl):
             optim.optimizer.zero_grad()
-            inp = (batch['src'][:, 1:, 2:4].to(device) - mean.to(device)) / std.to(device)
-            target = (batch['trg'][:, :-1, 2:4].to(device) - mean.to(device)) / std.to(device)
+            # inp = (batch['src'][:, 1:, 2:4].to(device) - mean.to(device)) / std.to(device)
+            inp = (batch['src'][:, :, number_features:number_features*2].to(device) - mean.to(device)) / std.to(device)
+            target = (batch['trg'][:, :-1, number_features:number_features*2].to(device) - mean.to(device)) / std.to(device)
+            # target = (batch['trg'][:, :, 2:4].to(device) - mean.to(device)) / std.to(device)
             target_c = torch.zeros((target.shape[0], target.shape[1], 1)).to(device)
             target = torch.cat((target, target_c), -1)
-            start_of_seq = torch.Tensor([0, 0, 1]).unsqueeze(0).unsqueeze(1).repeat(target.shape[0], 1, 1).to(device)
 
+            start_of_seq = torch.Tensor([0]*number_features+[1]).unsqueeze(0).unsqueeze(1).repeat(target.shape[0], 1, 1).to(device)
+            # start_of_seq = torch.Tensor([0, 0]).unsqueeze(0).unsqueeze(1).repeat(target.shape[0], 1, 1).to(device)
+
+            # dec_inp = torch.cat((start_of_seq, target), 1)
             dec_inp = torch.cat((start_of_seq, target), 1)
-
+            # dec_inp = target.detach().clone()
             src_att = torch.ones((inp.shape[0], 1, inp.shape[1])).to(device)
             trg_att = subsequent_mask(dec_inp.shape[1]).repeat(dec_inp.shape[0], 1, 1).to(device)
 
             pred = model(inp, dec_inp, src_att, trg_att)
 
-            loss = F.pairwise_distance(pred[:, :, 0:2].contiguous().view(-1, 2),
-                                       ((batch['trg'][:, :, 2:4].to(device) - mean.to(device)) / std.to(
-                                           device)).contiguous().view(-1, 2).to(device)).mean() + torch.mean(
-                torch.abs(pred[:, :, 2]))
+            loss = F.pairwise_distance(pred[:, :, :number_features].contiguous().view(-1, 2),
+                                       ((batch['trg'][:, :, number_features:].to(device) - mean.to(device)) / std.to(device))
+                                       .contiguous().view(-1, 2).to(device)).mean() \
+                   + torch.mean(torch.abs(pred[:, :, number_features]))
+
             loss.backward()
             optim.step()
             print("train epoch %03i/%03i  batch %04i / %04i loss: %7.4f" % (
-            epoch, args.max_epoch, id_b, len(tr_dl), loss.item()))
+                epoch, args.max_epoch, id_b, len(tr_dl), loss.item()))
             epoch_loss += loss.item()
         # sched.step()
 
         log.add_scalar('Loss/train', epoch_loss / len(tr_dl), epoch)
+
+        ###################################################################
+        # Validation
 
         with torch.no_grad():
             model.eval()
@@ -181,15 +203,16 @@ def main():
 
             for id_b, batch in enumerate(val_dl):
                 inp_.append(batch['src'])
-                gt.append(batch['trg'][:, :, 0:2])
+                gt.append(batch['trg'][:, :, 0:number_features])
                 frames.append(batch['frames'])
                 peds.append(batch['peds'])
                 dt.append(batch['dataset'])
 
-                inp = (batch['src'][:, 1:, 2:4].to(device) - mean.to(device)) / std.to(device)
+                # inp = (batch['src'][:, 1:, 2:4].to(device) - mean.to(device)) / std.to(device)
+                inp = (batch['src'][:, :, number_features:number_features*2].to(device) - mean.to(device)) / std.to(device)
                 src_att = torch.ones((inp.shape[0], 1, inp.shape[1])).to(device)
-                start_of_seq = torch.Tensor([0, 0, 1]).unsqueeze(0).unsqueeze(1).repeat(inp.shape[0], 1, 1).to(
-                    device)
+                start_of_seq = torch.Tensor([0]*number_features+[1]).unsqueeze(0).unsqueeze(1).repeat(inp.shape[0], 1, 1).to(device)
+                # start_of_seq = torch.Tensor([0, 0]).unsqueeze(0).unsqueeze(1).repeat(inp.shape[0], 1, 1).to(device)
                 dec_inp = start_of_seq
 
                 for i in range(args.preds):
@@ -197,9 +220,9 @@ def main():
                     out = model(inp, dec_inp, src_att, trg_att)
                     dec_inp = torch.cat((dec_inp, out[:, -1:, :]), 1)
 
-                preds_tr_b = (dec_inp[:, 1:, 0:2] * std.to(device) \
+                preds_tr_b = (dec_inp[:, 1:, 0:number_features] * std.to(device) \
                               + mean.to(device)).cpu().numpy().cumsum(1) \
-                             + batch['src'][:, -1:,0:2].cpu().numpy()
+                             + batch['src'][:, -1:,0:number_features].cpu().numpy()
 
                 pr.append(preds_tr_b)
                 print("val epoch %03i/%03i  batch %04i / %04i" % (epoch, args.max_epoch, id_b, len(val_dl)))
@@ -210,9 +233,11 @@ def main():
             gt = np.concatenate(gt, 0)
             dt_names = test_dataset.data['dataset_name']
             pr = np.concatenate(pr, 0)
-            mad, fad, errs = baselineUtils.distance_metrics(gt, pr)
+            # mad, fad, errs = baselineUtils.distance_metrics(gt, pr)
+            mad, fad, errs = baselineUtils.distance_metrics(gt, pr[:,:,:])
             log.add_scalar('validation/MAD', mad, epoch)
             log.add_scalar('validation/FAD', fad, epoch)
+            print("epoch", epoch, "validation MAD, FAD:", mad, fad)
 
             if args.evaluate:
 
@@ -231,10 +256,11 @@ def main():
                     peds.append(batch['peds'])
                     dt.append(batch['dataset'])
 
-                    inp = (batch['src'][:, 1:, 2:4].to(device) - mean.to(device)) / std.to(device)
+                    # inp = (batch['src'][:, 1:, 2:4].to(device) - mean.to(device)) / std.to(device)
+                    inp = (batch['src'][:, :, 2:4].to(device) - mean.to(device)) / std.to(device)
                     src_att = torch.ones((inp.shape[0], 1, inp.shape[1])).to(device)
-                    start_of_seq = torch.Tensor([0, 0, 1]).unsqueeze(0).unsqueeze(1).repeat(inp.shape[0], 1, 1).to(
-                        device)
+                    start_of_seq = torch.Tensor([0, 0, 1]).unsqueeze(0).unsqueeze(1).repeat(inp.shape[0], 1, 1).to(device)
+                    # start_of_seq = torch.Tensor([0, 0]).unsqueeze(0).unsqueeze(1).repeat(inp.shape[0], 1, 1).to(device)
                     dec_inp = start_of_seq
 
                     for i in range(args.preds):
@@ -254,6 +280,7 @@ def main():
                 dt_names = test_dataset.data['dataset_name']
                 pr = np.concatenate(pr, 0)
                 mad, fad, errs = baselineUtils.distance_metrics(gt, pr)
+                # mad, fad, errs = baselineUtils.distance_metrics(gt, pr[:,1:,:])
 
                 log.add_scalar('eval/DET_mad', mad, epoch)
                 log.add_scalar('eval/DET_fad', fad, epoch)
@@ -274,4 +301,11 @@ def main():
 
 
 if __name__ == '__main__':
+    clear_logs = True
+
+    if clear_logs:
+        logs_dir = "/home/bassel/PycharmProjects/Trajectory-Transformer/logs/Ind_nuscenes/"
+        for f in os.listdir(logs_dir):
+            os.remove(logs_dir+f)
+
     main()
