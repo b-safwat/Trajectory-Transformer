@@ -9,7 +9,7 @@ import scipy.io
 
 
 def create_dataset(dataset_folder, dataset_name, val_size, gt, horizon,
-                   delim="\t", train=True, eval=False, verbose=False, inference=False):
+                   delim="\t", train=True, eval=False, verbose=False, inference=False, num_columns=2):
     if not inference:
         if train == True:
             full_dt_folder = os.path.join(dataset_folder, dataset_name, "train")
@@ -51,11 +51,12 @@ def create_dataset(dataset_folder, dataset_name, val_size, gt, horizon,
         if verbose:
             print("%03i / %03i - loading %s" % (i_dt + 1, len(datasets_list), dt))
         raw_data = pd.read_csv(os.path.join(full_dt_folder, dt), delimiter=delim,
-                               names=["frame", "ped", "x", "y"], usecols=[0, 1, 2, 3], na_values="?")
+                               names=["frame", "ped", "x", "y", "z", "yaw"], # "l", "w" , "h", "yaw"],
+                               usecols=list(range(2+num_columns)), na_values="?")
 
         raw_data.sort_values(by=['frame', 'ped'], inplace=True)
 
-        inp, out, info = get_strided_data_clust(raw_data, gt, horizon, 1)
+        inp, out, info = get_strided_data_clust(raw_data, gt, horizon, 1, num_columns)
 
         dt_frames = info['frames']
         dt_seq_start = info['seq_start']
@@ -225,7 +226,7 @@ def get_strided_data_2(dt, gt_size, horizon, step):
                                                           'peds': ped_ids}
 
 
-def get_strided_data_clust(dt, gt_size, horizon, step):
+def get_strided_data_clust(dt, gt_size, horizon, step, num_cols=2):
     inp_te = []
     dtt = dt.astype(np.float32)
     raw_data = dtt
@@ -237,7 +238,7 @@ def get_strided_data_clust(dt, gt_size, horizon, step):
         for i in range(1 + (raw_data[raw_data.ped == p].shape[0] - gt_size - horizon) // step):
             frame.append(dt[dt.ped == p].iloc[i * step:i * step + gt_size + horizon, [0]].values.squeeze())
             # print("%i,%i,%i" % (i * 4, i * 4 + gt_size, i * 4 + gt_size + horizon))
-            inp_te.append(raw_data[raw_data.ped == p].iloc[i * step:i * step + gt_size + horizon, 2:4].values)
+            inp_te.append(raw_data[raw_data.ped == p].iloc[i * step:i * step + gt_size + horizon, 2:2+num_cols].values)
             ped_ids.append(p)
 
     frames = np.stack(frame)
@@ -245,9 +246,10 @@ def get_strided_data_clust(dt, gt_size, horizon, step):
     ped_ids = np.stack(ped_ids)
 
     # inp_relative_pos= inp_te_np-inp_te_np[:,:1,:]
-    inp_speed = np.concatenate((np.zeros((inp_te_np.shape[0], 1, 2)),
-                                inp_te_np[:, 1:, 0:2] - inp_te_np[:, :-1, 0:2]),
+    inp_speed = np.concatenate((np.zeros((inp_te_np.shape[0], 1, num_cols)),
+                                inp_te_np[:, 1:, 0:num_cols] - inp_te_np[:, :-1, 0:num_cols]),
                                1)
+    # inp_speed[:,:,3:6] = inp_te_np[:,:,3:6]
     # inp_accel = np.concatenate((np.zeros((inp_te_np.shape[0],1,2)),inp_speed[:,1:,0:2] - inp_speed[:, :-1, 0:2]),1)
     # inp_std = inp_no_start.std(axis=(0, 1))
     # inp_mean = inp_no_start.mean(axis=(0, 1))
@@ -257,8 +259,8 @@ def get_strided_data_clust(dt, gt_size, horizon, step):
     # vis=inp_te_np[:,1:,2:4]/np.linalg.norm(inp_te_np[:,1:,2:4],2,axis=2)[:,:,np.newaxis]
     # inp_norm=np.concatenate((inp_norm,vis),2)
     inp_norm = np.concatenate((inp_te_np, inp_speed), 2)
-    inp_mean = np.zeros(4)
-    inp_std = np.ones(4)
+    inp_mean = np.zeros(num_cols*2)
+    inp_std = np.ones(num_cols*2)
 
     return inp_norm[:, :gt_size], inp_norm[:, gt_size:], {'mean': inp_mean, 'std': inp_std,
                                                           'seq_start': inp_te_np[:, 0:1, :].copy(),
