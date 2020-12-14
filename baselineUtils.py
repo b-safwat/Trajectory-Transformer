@@ -51,7 +51,7 @@ def create_dataset(dataset_folder, dataset_name, val_size, gt, horizon,
         if verbose:
             print("%03i / %03i - loading %s" % (i_dt + 1, len(datasets_list), dt))
         raw_data = pd.read_csv(os.path.join(full_dt_folder, dt), delimiter=delim,
-                               names=["frame", "ped", "x", "y", "z", "yaw"], # "l", "w" , "h", "yaw"],
+                               names=["frame", "ped", "x", "y", "velocity", "acceleration", "yaw"],# , "h", "yaw"],
                                usecols=list(range(2+num_columns)), na_values="?")
 
         raw_data.sort_values(by=['frame', 'ped'], inplace=True)
@@ -246,9 +246,17 @@ def get_strided_data_clust(dt, gt_size, horizon, step, num_cols=2):
     ped_ids = np.stack(ped_ids)
 
     # inp_relative_pos= inp_te_np-inp_te_np[:,:1,:]
+    # inp_speed = np.concatenate((np.zeros((inp_te_np.shape[0], 1, num_cols)),
+    #                             inp_te_np[:, 1:, 0:num_cols] - inp_te_np[:, :-1, 0:num_cols]),
+    #                            1)
     inp_speed = np.concatenate((np.zeros((inp_te_np.shape[0], 1, num_cols)),
-                                inp_te_np[:, 1:, 0:num_cols] - inp_te_np[:, :-1, 0:num_cols]),
+                                np.concatenate((inp_te_np[:, 1:, 0:2] - inp_te_np[:, :-1, 0:2],
+                                                inp_te_np[:, 1:, 2:num_cols]), 2)),
                                1)
+    # input is not relative:
+    # inp_speed = inp_te_np[:, :, 0:num_cols].copy()
+
+
     # inp_speed[:,:,3:6] = inp_te_np[:,:,3:6]
     # inp_accel = np.concatenate((np.zeros((inp_te_np.shape[0],1,2)),inp_speed[:,1:,0:2] - inp_speed[:, :-1, 0:2]),1)
     # inp_std = inp_no_start.std(axis=(0, 1))

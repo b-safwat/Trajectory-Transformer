@@ -25,17 +25,17 @@ def main():
     parser.add_argument('--dataset_name', type=str, default='nuscenes')
     parser.add_argument('--obs', type=int, default=8)
     parser.add_argument('--preds', type=int, default=12)
-    parser.add_argument('--emb_size', type=int, default=1024) # 512
-    parser.add_argument('--heads', type=int, default=1) # 8
+    parser.add_argument('--emb_size', type=int, default=512) # 512
+    parser.add_argument('--heads', type=int, default=2) # 8
     parser.add_argument('--layers', type=int, default=8) # 6
     parser.add_argument('--dropout', type=float, default=0.1)
     parser.add_argument('--cpu', action='store_true')
     parser.add_argument('--val_size', type=int, default=0)
     parser.add_argument('--verbose', action='store_true')
-    parser.add_argument('--max_epoch', type=int, default=250)
+    parser.add_argument('--max_epoch', type=int, default=1000)
     parser.add_argument('--batch_size', type=int, default=1024) # 70
     parser.add_argument('--validation_epoch_start', type=int, default=30)
-    parser.add_argument('--resume_train', action='store_true', default=False)
+    parser.add_argument('--resume_train', action='store_true', default=True)
     parser.add_argument('--delim', type=str, default='\t')
     parser.add_argument('--name', type=str, default="nuscenes")
     parser.add_argument('--factor', type=float, default=1.)
@@ -82,7 +82,7 @@ def main():
     if args.cpu or not torch.cuda.is_available():
         device = torch.device("cpu")
 
-    number_features = 4
+    number_features = 5
     args.verbose = True
 
     ## creation of the dataloaders for train and validation
@@ -122,7 +122,7 @@ def main():
     # sched=torch.optim.lr_scheduler.StepLR(optim,0.0005)
     optim = NoamOpt(args.emb_size, args.factor, len(tr_dl) * args.warmup,
                     torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
-                    # torch.optim.SGD(model.parameters(), lr=0.1, momentum=0.9))
+                    # torch.optim.SGD(model.parameters(), lr=0.0001, momentum=0.9))
     # optim=Adagrad(list(a.parameters())+list(model.parameters())+list(generator.parameters()),lr=0.01,lr_decay=0.001)
     epoch = 0
 
@@ -142,8 +142,11 @@ def main():
             torch.cat((train_dataset[:]['src'][ind, 1:, number_features:2*number_features],
                        train_dataset[:]['trg'][ind, :, number_features:2*number_features]), 1).std((0, 1)))
 
-    mean = torch.stack(means).mean(0)
-    std = torch.stack(stds).mean(0)
+    # mean = torch.stack(means).mean(0)
+    # std = torch.stack(stds).mean(0)
+    # input is not normalized:
+    mean = torch.zeros((number_features,))
+    std = torch.ones((number_features,))
 
     scipy.io.savemat(f'models/Individual/{args.name}/norm.mat', {'mean': mean.cpu().numpy(), 'std': std.cpu().numpy()})
 
@@ -160,7 +163,12 @@ def main():
             target_c = torch.zeros((target.shape[0], target.shape[1], 1)).to(device)
             target = torch.cat((target, target_c), -1)
 
-            start_of_seq = torch.Tensor([0]*number_features+[1]).unsqueeze(0).unsqueeze(1).repeat(target.shape[0], 1, 1).to(device)
+            # start_of_seq = torch.Tensor([0]*number_features+[1]).unsqueeze(0).unsqueeze(1).repeat(target.shape[0], 1, 1).to(device)
+            start_of_seq = torch.cat(
+                (((batch['src'][:, -1:, number_features:number_features*2].to(device)-mean.to(device))/std.to(device)),
+                 torch.zeros((batch['src'].shape[0], 1, 1)).to(device)),
+                -1)
+
             # start_of_seq = torch.Tensor([0, 0]).unsqueeze(0).unsqueeze(1).repeat(target.shape[0], 1, 1).to(device)
 
             # dec_inp = torch.cat((start_of_seq, target), 1)
@@ -203,7 +211,7 @@ def main():
 
             for id_b, batch in enumerate(val_dl):
                 inp_.append(batch['src'])
-                gt.append(batch['trg'][:, :, 0:number_features])
+                gt.append(batch['trg'][:, :, 0:2])
                 frames.append(batch['frames'])
                 peds.append(batch['peds'])
                 dt.append(batch['dataset'])
@@ -211,8 +219,13 @@ def main():
                 # inp = (batch['src'][:, 1:, 2:4].to(device) - mean.to(device)) / std.to(device)
                 inp = (batch['src'][:, :, number_features:number_features*2].to(device) - mean.to(device)) / std.to(device)
                 src_att = torch.ones((inp.shape[0], 1, inp.shape[1])).to(device)
-                start_of_seq = torch.Tensor([0]*number_features+[1]).unsqueeze(0).unsqueeze(1).repeat(inp.shape[0], 1, 1).to(device)
-                # start_of_seq = torch.Tensor([0, 0]).unsqueeze(0).unsqueeze(1).repeat(inp.shape[0], 1, 1).to(device)
+                # start_of_seq = torch.Tensor([0]*number_features+[1]).unsqueeze(0).unsqueeze(1).repeat(inp.shape[0], 1, 1).to(device)
+                start_of_seq = torch.cat(
+                    (((batch['src'][:, -1:, number_features:number_features * 2].to(device) - mean.to(device)) / std.to(
+                        device)),
+                     torch.zeros((batch['src'].shape[0], 1, 1)).to(device)),
+                    -1)
+
                 dec_inp = start_of_seq
 
                 for i in range(args.preds):
@@ -220,9 +233,13 @@ def main():
                     out = model(inp, dec_inp, src_att, trg_att)
                     dec_inp = torch.cat((dec_inp, out[:, -1:, :]), 1)
 
-                preds_tr_b = (dec_inp[:, 1:, 0:number_features] * std.to(device) \
-                              + mean.to(device)).cpu().numpy().cumsum(1) \
-                             + batch['src'][:, -1:,0:number_features].cpu().numpy()
+                preds_tr_b = (dec_inp[:, 1:, 0:2] * std[:2].to(device) \
+                              + mean[:2].to(device)).cpu().numpy().cumsum(1) \
+                             + batch['src'][:, -1:,0:2].cpu().numpy()
+
+                # input is not relative:
+                # preds_tr_b = (dec_inp[:, 1:, 0:number_features] * std.to(device)
+                #               + mean.to(device)).cpu().numpy()
 
                 pr.append(preds_tr_b)
                 print("val epoch %03i/%03i  batch %04i / %04i" % (epoch, args.max_epoch, id_b, len(val_dl)))
